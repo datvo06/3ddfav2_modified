@@ -8,9 +8,13 @@ from tqdm import tqdm
 import yaml
 
 from FaceBoxes import FaceBoxes
-from TDDFA import TDDFA
+from TDDFA import TDDFA, recon_dense
 from utils.render import render
 from utils.functions import cv_draw_landmark, get_suffix
+from utils.serialization import get_colors
+from utils.serialization import ser_to_obj_multiple_colors
+from utils.tddfa_util import _parse_param, recon_dense_explicit
+import cv2
 
 
 def main(args):
@@ -31,13 +35,22 @@ def main(args):
     reader = imageio.get_reader(args.video_fp)
 
     fps = reader.get_meta_data()['fps']
+    dense_flag = args.opt in ('3d',)
+
+    nick_orig = cv2.imread('Assets4FacePaper/nick.bmp')
+    nick_box = face_boxes(nick_orig)[0]
+    nick_param_lst, nick_roi_box_lst = tddfa(nick_orig, [nick_box])
+    nick_param = nick_param_lst[0]
+    nick_roi_box = nick_roi_box_lst[0]
+    _, _, nick_alpha_shp, nick_alpha_exp = _parse_param(nick_param)
+    nick_ver = recon_dense(nick_param, nick_roi_box, tddfa.size)
+    nick_color = get_colors(nick_orig, nick_ver)
+
 
     suffix = get_suffix(args.video_fp)
     video_wfp = f'examples/results/videos/{fn.replace(suffix, "")}_{args.opt}.mp4'
-    writer = imageio.get_writer(video_wfp, fps=fps)
 
     # run
-    dense_flag = args.opt in ('3d',)
     pre_ver = None
     for i, frame in tqdm(enumerate(reader)):
         frame_bgr = frame[..., ::-1]  # RGB->BGR
@@ -51,7 +64,10 @@ def main(args):
 
             # refine
             param_lst, roi_box_lst = tddfa(frame_bgr, [ver], crop_policy='landmark')
-            ver = tddfa.recon_vers(param_lst, roi_box_lst, dense_flag=dense_flag)[0]
+            R, offset, _ , alpha_exp = _parse_param(param_lst[0])
+            ver = recon_dense_explicit(R, offset, nick_alpha_shp, alpha_exp,
+                                       roi_box_lst[0], tddfa.size)
+
         else:
             param_lst, roi_box_lst = tddfa(frame_bgr, [pre_ver], crop_policy='landmark')
 
@@ -62,23 +78,20 @@ def main(args):
                 boxes = [boxes[0]]
                 param_lst, roi_box_lst = tddfa(frame_bgr, boxes)
 
-            ver = tddfa.recon_vers(param_lst, roi_box_lst, dense_flag=dense_flag)[0]
+            R, offset, _ , alpha_exp = _parse_param(param_lst[0])
+            ver = recon_dense_explicit(R, offset, nick_alpha_shp, alpha_exp,
+                                       roi_box_lst[0], tddfa.size)
 
+        # Write object
         pre_ver = ver  # for tracking
 
-        if args.opt == '2d_sparse':
-            res = cv_draw_landmark(frame_bgr, ver)
-        elif args.opt == '3d':
-            res = render(frame_bgr, [ver])
-        else:
-            raise ValueError(f'Unknown opt {args.opt}')
-
-        writer.append_data(res[..., ::-1])  # BGR->RGB
+        ser_to_obj_multiple_colors(nick_color, [ver],
+                                   height=int(nick_orig.shape[0]*1.5),
+                                   wfp=str(i) +'.obj')
+        print(f'Dump to {str(i)}.obj')
         if i > 1000:
             break
 
-    writer.close()
-    print(f'Dump to {video_wfp}')
 
 
 if __name__ == '__main__':

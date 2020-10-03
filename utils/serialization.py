@@ -142,5 +142,34 @@ def ser_to_obj_multiple(img, ver_lst, height, wfp):
     print(f'Dump tp {wfp}')
 
 
+def ser_to_obj_multiple_colors(colors, ver_lst, height, wfp):
+    n_obj = len(ver_lst)  # count obj
+
+    if n_obj <= 0:
+        return
+
+    n_vertex = ver_lst[0].shape[1]
+    n_face = tri.shape[0]
+
+    with open(wfp, 'w') as f:
+        for i in range(n_obj):
+            ver = ver_lst[i]
+
+            for j in range(n_vertex):
+                x, y, z = ver[:, j]
+                f.write(
+                    f'v {x:.2f} {height - y:.2f} {z:.2f} {colors[j, 2]:.2f} {colors[j, 1]:.2f} {colors[j, 0]:.2f}\n')
+
+        for i in range(n_obj):
+            offset = i * n_vertex
+            for j in range(n_face):
+                idx1, idx2, idx3 = tri[j]  # m x 3
+                f.write(f'f {idx3 + 1 + offset} {idx2 + 1 + offset} {idx1 + 1 + offset}\n')
+
+    print(f'Dump tp {wfp}')
+
+
+
+
 ser_to_ply = ser_to_ply_multiple  # ser_to_ply_single
 ser_to_obj = ser_to_obj_multiple  # ser_to_obj_multiple
