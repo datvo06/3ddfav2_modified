@@ -113,6 +113,13 @@ def recon_dense(param, roi_box, size):
     pts3d = similar_transform(pts3d, roi_box, size)
     return pts3d
 
+
+def recon_dense_base(alpha_shp, alpha_exp):
+    """Dense points reconstruction: 53215 points"""
+    pts3d = (u + w_shp @ alpha_shp + w_exp @ alpha_exp).reshape(3, -1, order='F')
+    return pts3d
+
+
 def recon_dense_explicit(R, offset, alpha_shp, alpha_exp, roi_box, size):
     """Dense points reconstruction: 53215 points"""
     pts3d = R @ (u + w_shp @ alpha_shp + w_exp @ alpha_exp).reshape(3, -1, order='F') + offset

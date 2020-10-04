@@ -13,8 +13,37 @@ from utils.render import render
 from utils.functions import cv_draw_landmark, get_suffix
 from utils.serialization import get_colors
 from utils.serialization import ser_to_obj_multiple_colors
-from utils.tddfa_util import _parse_param, recon_dense_explicit
+from utils.tddfa_util import (_parse_param, recon_dense_explicit,
+                              recon_dense_base)
+import numpy as np
+import os
 import cv2
+
+
+def load_vertices_with_colors(fp, face_boxes, tddfa):
+    img_orig = cv2.imread(fp)
+    box = face_boxes(img_orig)[0]
+    param_lst, roi_box_lst = tddfa(img_orig, [box])
+    param = param_lst[0]
+    roi_box = roi_box_lst[0]
+    _, _, alpha_shp, alpha_exp = _parse_param(param)
+    ver = recon_dense(param, roi_box, tddfa.size)
+    color = get_colors(img_orig, ver)
+    return ver, color, param
+
+
+def load_vertices_set(dirp, fnames, face_boxes, tddfa):
+    v_neutral, c_neutral, param = load_vertices_with_colors(
+        os.path.join(dirp, fnames[0]), face_boxes, tddfa)
+    v_set = []
+    c_set = []
+    for fname in fnames[1:]:
+        new_v, new_c = load_vertices_with_colors(os.path.join(dirp, fname),
+                                                 face_boxes, tddfa)
+        v_set.append(new_v)
+        c_set.append(new_c)
+    return np.array(v_neutral), np.array(c_neutral), \
+        np.array(v_set), np.array(c_set), param
 
 
 def main(args):
@@ -36,15 +65,24 @@ def main(args):
 
     fps = reader.get_meta_data()['fps']
     dense_flag = args.opt in ('3d',)
-
     nick_orig = cv2.imread('Assets4FacePaper/nick.bmp')
-    nick_box = face_boxes(nick_orig)[0]
-    nick_param_lst, nick_roi_box_lst = tddfa(nick_orig, [nick_box])
-    nick_param = nick_param_lst[0]
-    nick_roi_box = nick_roi_box_lst[0]
+    tv_neutral, tc_neutral, tv_set, tc_set, nick_param = load_vertices_set(
+        'Assets4FacePaper',
+        ['nick.bmp', 'nick_crop_1.jpg', 'nick_crop_2.jpg',
+         'nick_crop_3.jpg', 'nick_crop_4.jpg', 'nick_crop_5.jpg',
+         'nick_crop_6.jpg'], face_boxes, tddfa
+    )
+    sv_neutral, sc_neutral, sv_set, sc_set, thanh_param = load_vertices_set(
+        'Assets4FacePaper',
+        ['Thanh.jpg', 'Thanh_1.jpg', 'Thanh_2.jpg',
+         'Thanh_3.jpg', 'Thanh_4.jpg', 'Thanh_5.jpg',
+         'Thanh_6.jpg'], face_boxes, tddfa
+    )
+
     _, _, nick_alpha_shp, nick_alpha_exp = _parse_param(nick_param)
-    nick_ver = recon_dense(nick_param, nick_roi_box, tddfa.size)
-    nick_color = get_colors(nick_orig, nick_ver)
+    _, _, thanh_alpha_shp, thanh_alpha_exp = _parse_param(thanh_param)
+    nick_ver = tc_neutral
+    nick_color = tc_neutral
 
 
     suffix = get_suffix(args.video_fp)
