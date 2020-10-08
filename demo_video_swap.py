@@ -18,6 +18,7 @@ from utils.tddfa_util import (_parse_param, recon_dense_explicit,
 import numpy as np
 import os
 import cv2
+import torch
 
 
 def load_vertices_with_colors(fp, face_boxes, tddfa):
@@ -33,17 +34,91 @@ def load_vertices_with_colors(fp, face_boxes, tddfa):
 
 
 def load_vertices_set(dirp, fnames, face_boxes, tddfa):
+    '''
+    Out: torch tensor
+    '''
     v_neutral, c_neutral, param = load_vertices_with_colors(
         os.path.join(dirp, fnames[0]), face_boxes, tddfa)
     v_set = []
     c_set = []
     for fname in fnames[1:]:
-        new_v, new_c = load_vertices_with_colors(os.path.join(dirp, fname),
+        new_v, new_c, param = load_vertices_with_colors(os.path.join(dirp, fname),
                                                  face_boxes, tddfa)
         v_set.append(new_v)
         c_set.append(new_c)
-    return np.array(v_neutral), np.array(c_neutral), \
-        np.array(v_set), np.array(c_set), param
+    return torch.from_numpy(np.array(v_neutral)).float(), \
+        torch.from_numpy(np.array(c_neutral)).float(), \
+        torch.from_numpy(np.array(v_set)).float(), \
+        torch.from_numpy(np.array(c_set)).float(), param
+
+
+def get_delta_vertices_set(v_neutral, v_set):
+    '''
+    Input:
+        v_neutral: N x 3
+        v_set: E x N x 3
+    '''
+    return v_set - v_neutral
+
+
+def fit_coeffs_aio(v, v_neutral, delta_set, reg_fact=1000):
+    '''
+    Input:
+        v: N x 3
+        v_neutral: Nx 3
+        delta_set: E x N x 3
+    Output:
+        w: E x 1
+    '''
+    N = list(v.size())[0]
+    E = list(delta_set.size())[0]
+    delta_0 = (v - v_neutral).view(1, 3*N)     # N x 3
+    delta_set = delta_set.view(E, 3*N).float()  # E 3N
+    inv_coeffs = torch.inverse(torch.matmul(delta_set, delta_set.transpose(0, 1)) + reg_fact).float()  # E E
+    rhs = torch.matmul(delta_0, delta_set.transpose(0, 1))      # 1 E
+    return torch.transpose(torch.matmul(rhs, inv_coeffs), 0, 1) # E 1
+
+
+def calc_activation_masks(v_neutral, v_set):
+    '''
+    Inputs:
+        v: N x 3
+        v_set: E x N x 3
+    Output:
+        A: E x N
+    '''
+    return torch.sum(torch.pow(v_neutral - v_set, 2), dim=-1).float()  # K x N
+
+
+def normalize_coeffs(a_set, act_masks):
+    '''
+        act_masks: E x N
+        a_set: E x 1
+    Return:
+        w_0: N
+        w_set: E x N
+    '''
+    w_set = a_set * act_masks   # E N
+    sum_wset_per_v = torch.sum(w_set, dim=0) # N
+    w_0 = torch.max(torch.tensor([0.]), 1.0 - sum_wset_per_v)  # N
+    new_sum_wset = 1.0 - w_0                    # 1 x N
+    ratio = new_sum_wset/sum_wset_per_v       # 1 x N
+    w_set = w_set* ratio            # E x N
+    return w_0, w_set
+
+
+def calc_colors_w_act_mask(a_set, act_masks, c_neutral, c_set):
+    '''
+    Input:
+        a_set: E x 1(E : num blendshape)
+        act_masks: E x N
+        c_set: E x N x 3
+        c_neutral: N x 3
+    '''
+    w_0, w_set = normalize_coeffs(a_set, act_masks)
+    return (torch.unsqueeze(w_0, -1) * c_neutral +
+            torch.sum(torch.unsqueeze(w_set, -1) * c_set, dim=0)
+            ).view(list(c_neutral.size())[0], 3).transpose(0, 1)
 
 
 def main(args):
@@ -68,22 +143,27 @@ def main(args):
     nick_orig = cv2.imread('Assets4FacePaper/nick.bmp')
     tv_neutral, tc_neutral, tv_set, tc_set, nick_param = load_vertices_set(
         'Assets4FacePaper',
-        ['nick.bmp', 'nick_crop_1.jpg', 'nick_crop_2.jpg',
-         'nick_crop_3.jpg', 'nick_crop_4.jpg', 'nick_crop_5.jpg',
-         'nick_crop_6.jpg'], face_boxes, tddfa
+        ['sam_0_0.jpg', 'sam_0_1.jpg', 'sam_0_2.jpg',
+         'sam_0_3.jpg', 'sam_0_4.jpg', 'sam_0_5.jpg',
+         'sam_0_6.jpg'], face_boxes, tddfa
     )
     sv_neutral, sc_neutral, sv_set, sc_set, thanh_param = load_vertices_set(
         'Assets4FacePaper',
-        ['Thanh.jpg', 'Thanh_1.jpg', 'Thanh_2.jpg',
-         'Thanh_3.jpg', 'Thanh_4.jpg', 'Thanh_5.jpg',
-         'Thanh_6.jpg'], face_boxes, tddfa
+        ['Thanh.jpg', 'Thanh1.jpg', 'Thanh2.jpg',
+         'Thanh3.jpg', 'Thanh4.jpg', 'Thanh5.jpg',
+         'Thanh6.jpg'], face_boxes, tddfa
     )
 
     _, _, nick_alpha_shp, nick_alpha_exp = _parse_param(nick_param)
+    nick_act_masks = calc_activation_masks(tv_neutral, tv_set)
+    delta_set_nick = get_delta_vertices_set(tv_neutral, tv_set)
+
     _, _, thanh_alpha_shp, thanh_alpha_exp = _parse_param(thanh_param)
+    thanh_act_masks = calc_activation_masks(sv_neutral, sv_set)
+    delta_set_thanh = get_delta_vertices_set(sv_neutral, sv_set)
+
     nick_ver = tc_neutral
     nick_color = tc_neutral
-
 
     suffix = get_suffix(args.video_fp)
     video_wfp = f'examples/results/videos/{fn.replace(suffix, "")}_{args.opt}.mp4'
@@ -101,13 +181,15 @@ def main(args):
             ver = tddfa.recon_vers(param_lst, roi_box_lst, dense_flag=dense_flag)[0]
 
             # refine
-            param_lst, roi_box_lst = tddfa(frame_bgr, [ver], crop_policy='landmark')
+            param_lst, roi_box_lst = tddfa(frame_bgr, [ver],
+                                           crop_policy='landmark')
             R, offset, _ , alpha_exp = _parse_param(param_lst[0])
             ver = recon_dense_explicit(R, offset, nick_alpha_shp, alpha_exp,
                                        roi_box_lst[0], tddfa.size)
 
         else:
-            param_lst, roi_box_lst = tddfa(frame_bgr, [pre_ver], crop_policy='landmark')
+            param_lst, roi_box_lst = tddfa(frame_bgr, [pre_ver],
+                                           crop_policy='landmark')
 
             roi_box = roi_box_lst[0]
             # todo: add confidence threshold to judge the tracking is failed
@@ -120,13 +202,14 @@ def main(args):
             ver = recon_dense_explicit(R, offset, nick_alpha_shp, alpha_exp,
                                        roi_box_lst[0], tddfa.size)
 
+
         # Write object
         pre_ver = ver  # for tracking
 
         ser_to_obj_multiple_colors(nick_color, [ver],
                                    height=int(nick_orig.shape[0]*1.5),
-                                   wfp=str(i) +'.obj')
-        print(f'Dump to {str(i)}.obj')
+                                   wfp='./sam_exp_only_obj/' + str(i) +'.obj')
+        print(f'Dump to sam_exp_only_obj/{str(i)}.obj')
         if i > 1000:
             break
 

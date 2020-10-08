@@ -20,10 +20,11 @@ def rasterize(vertices, triangles, colors, bg=None,
         assert height is not None and width is not None and channel is not None
         bg = np.zeros((height, width, channel), dtype=np.uint8)
 
-    buffer = np.zeros((height, width), dtype=np.float32) - 1e8
+    buffer_ = np.zeros((height, width), dtype=np.float32) - 1e8
 
     if colors.dtype != np.float32:
         colors = colors.astype(np.float32)
-    Sim3DR_Cython.rasterize(bg, vertices, triangles, colors, buffer, triangles.shape[0], height, width, channel,
+    Sim3DR_Cython.rasterize(bg, vertices, triangles, colors, buffer_, triangles.shape[0], height, width, channel,
                             reverse=reverse)
+    print("BG shape: ", bg.shape)
     return bg

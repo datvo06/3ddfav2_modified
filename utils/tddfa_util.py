@@ -125,3 +125,9 @@ def recon_dense_explicit(R, offset, alpha_shp, alpha_exp, roi_box, size):
     pts3d = R @ (u + w_shp @ alpha_shp + w_exp @ alpha_exp).reshape(3, -1, order='F') + offset
     pts3d = similar_transform(pts3d, roi_box, size)
     return pts3d
+
+
+def transform_vertices(R, offset, v, roi_box, size):
+    pts3d = R @ v + offset
+    pts3d = similar_transform(pts3d, roi_box, size)
+    return pts3d
